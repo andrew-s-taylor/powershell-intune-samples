@@ -1,4 +1,5 @@
-﻿<#
+﻿
+<#
 
 .COPYRIGHT
 Copyright (c) Microsoft Corporation. All rights reserved. Licensed under the MIT license.
@@ -148,60 +149,125 @@ $authority = "https://login.microsoftonline.com/$Tenant"
 
 ####################################################
 
-Function Get-IntuneApplication(){
+Function Get-SettingsCatalogPolicy(){
 
 <#
 .SYNOPSIS
-This function is used to get applications from the Graph API REST interface
+This function is used to get Settings Catalog policies from the Graph API REST interface
 .DESCRIPTION
-The function connects to the Graph API Interface and gets any applications added
+The function connects to the Graph API Interface and gets any Settings Catalog policies
 .EXAMPLE
-Get-IntuneApplication
-Returns any applications configured in Intune
+Get-SettingsCatalogPolicy
+Returns any Settings Catalog policies configured in Intune
+Get-SettingsCatalogPolicy -Platform windows10
+Returns any Windows 10 Settings Catalog policies configured in Intune
+Get-SettingsCatalogPolicy -Platform macOS
+Returns any MacOS Settings Catalog policies configured in Intune
 .NOTES
-NAME: Get-IntuneApplication
+NAME: Get-SettingsCatalogPolicy
 #>
 
 [cmdletbinding()]
 
 param
 (
-    $Name,
-    $AppId
+ [parameter(Mandatory=$false)]
+ [ValidateSet("windows10","macOS")]
+ [ValidateNotNullOrEmpty()]
+ [string]$Platform
 )
 
-$graphApiVersion = "Beta"
-$Resource = "deviceAppManagement/mobileApps"
+$graphApiVersion = "beta"
+
+    if($Platform){
+        
+        $Resource = "deviceManagement/configurationPolicies?`$filter=platforms has '$Platform' and technologies has 'mdm'"
+
+    }
+
+    else {
+
+        $Resource = "deviceManagement/configurationPolicies?`$filter=technologies has 'mdm'"
+
+    }
 
     try {
 
-        if($Name){
-
         $uri = "https://graph.microsoft.com/$graphApiVersion/$($Resource)"
-        (Invoke-RestMethod -Uri $uri -Headers $authToken -Method Get).Value | Where-Object { ($_.'displayName').contains("$Name") -and (!($_.'@odata.type').Contains("managed")) -and (!($_.'@odata.type').Contains("#microsoft.graph.iosVppApp")) }
-
-        }
-
-        elseif($AppId){
-
-        $uri = "https://graph.microsoft.com/$graphApiVersion/$($Resource)/$AppId"
-        (Invoke-RestMethod -Uri $uri -Headers $authToken -Method Get)
-
-        }
-
-        else {
-
-        $uri = "https://graph.microsoft.com/$graphApiVersion/$($Resource)"
-        (Invoke-RestMethod -Uri $uri -Headers $authToken -Method Get).Value | ? { (!($_.'@odata.type').Contains("managed")) -and (!($_.'@odata.type').Contains("#microsoft.graph.iosVppApp")) -and (!($_.'@odata.type').Contains("#microsoft.graph.windowsAppX")) -and (!($_.'@odata.type').Contains("#microsoft.graph.androidForWorkApp")) -and (!($_.'@odata.type').Contains("#microsoft.graph.windowsMobileMSI")) -and (!($_.'@odata.type').Contains("#microsoft.graph.androidLobApp")) -and (!($_.'@odata.type').Contains("#microsoft.graph.iosLobApp")) -and (!($_.'@odata.type').Contains("#microsoft.graph.microsoftStoreForBusinessApp")) }
-
-        }
+        (Invoke-RestMethod -Uri $uri -Headers $authToken -Method Get).Value
 
     }
 
     catch {
 
     $ex = $_.Exception
-    Write-Host "Request to $Uri failed with HTTP Status $([int]$ex.Response.StatusCode) $($ex.Response.StatusDescription)" -f Red
+    $errorResponse = $ex.Response.GetResponseStream()
+    $reader = New-Object System.IO.StreamReader($errorResponse)
+    $reader.BaseStream.Position = 0
+    $reader.DiscardBufferedData()
+    $responseBody = $reader.ReadToEnd();
+    Write-Host "Response content:`n$responseBody" -f Red
+    Write-Error "Request to $Uri failed with HTTP Status $($ex.Response.StatusCode) $($ex.Response.StatusDescription)"
+    write-host
+    break
+
+    }
+
+}
+
+####################################################
+
+Function Get-SettingsCatalogPolicySettings(){
+
+<#
+.SYNOPSIS
+This function is used to get Settings Catalog policy Settings from the Graph API REST interface
+.DESCRIPTION
+The function connects to the Graph API Interface and gets any Settings Catalog policy Settings
+.EXAMPLE
+Get-SettingsCatalogPolicySettings -policyid policyid
+Returns any Settings Catalog policy Settings configured in Intune
+.NOTES
+NAME: Get-SettingsCatalogPolicySettings
+#>
+
+[cmdletbinding()]
+
+param
+(
+    [Parameter(Mandatory=$true)]
+    [ValidateNotNullOrEmpty()]
+    $policyid
+)
+
+$graphApiVersion = "beta"
+$Resource = "deviceManagement/configurationPolicies('$policyid')/settings?`$expand=settingDefinitions"
+
+    try {
+
+        $uri = "https://graph.microsoft.com/$graphApiVersion/$($Resource)"
+
+        $Response = (Invoke-RestMethod -Uri $uri -Headers $authToken -Method Get)
+
+        $AllResponses = $Response.value
+     
+        $ResponseNextLink = $Response."@odata.nextLink"
+
+        while ($ResponseNextLink -ne $null){
+
+            $Response = (Invoke-RestMethod -Uri $ResponseNextLink -Headers $authToken -Method Get)
+            $ResponseNextLink = $Response."@odata.nextLink"
+            $AllResponses += $Response.value
+
+        }
+
+        return $AllResponses
+
+    }
+
+    catch {
+
+    $ex = $_.Exception
     $errorResponse = $ex.Response.GetResponseStream()
     $reader = New-Object System.IO.StreamReader($errorResponse)
     $reader.BaseStream.Position = 0
@@ -235,7 +301,6 @@ NAME: Export-JSONData
 param (
 
 $JSON,
-$Type,
 $ExportPath
 
 )
@@ -244,62 +309,38 @@ $ExportPath
 
         if($JSON -eq "" -or $JSON -eq $null){
 
-        write-host "No JSON specified, please specify valid JSON..." -f Red
+            write-host "No JSON specified, please specify valid JSON..." -f Red
 
         }
 
         elseif(!$ExportPath){
 
-        write-host "No export path parameter set, please provide a path to export the file" -f Red
+            write-host "No export path parameter set, please provide a path to export the file" -f Red
 
         }
 
         elseif(!(Test-Path $ExportPath)){
 
-        write-host "$ExportPath doesn't exist, can't export JSON Data" -f Red
+            write-host "$ExportPath doesn't exist, can't export JSON Data" -f Red
 
         }
 
         else {
 
-        $JSON1 = ConvertTo-Json $JSON
+            $JSON1 = ConvertTo-Json $JSON -Depth 20
 
-        $JSON_Convert = $JSON1 | ConvertFrom-Json
+            $JSON_Convert = $JSON1 | ConvertFrom-Json
 
-        $displayName = $JSON_Convert.displayName
+            $displayName = $JSON_Convert.name
 
-        # Updating display name to follow file naming conventions - https://msdn.microsoft.com/en-us/library/windows/desktop/aa365247%28v=vs.85%29.aspx
-        $DisplayName = $DisplayName -replace '\<|\>|:|"|/|\\|\||\?|\*', "_"
+            # Updating display name to follow file naming conventions - https://msdn.microsoft.com/en-us/library/windows/desktop/aa365247%28v=vs.85%29.aspx
+            $DisplayName = $DisplayName -replace '\<|\>|:|"|/|\\|\||\?|\*', "_"
 
-        $Properties = ($JSON_Convert | Get-Member | ? { $_.MemberType -eq "NoteProperty" }).Name
-
-            if($Type){
-
-                $FileName_CSV = "$DisplayName" + "_" + $Type + "_" + $(get-date -f dd-MM-yyyy-H-mm-ss) + ".csv"
-                $FileName_JSON = "$DisplayName" + "_" + $Type + "_" + $(get-date -f dd-MM-yyyy-H-mm-ss) + ".json"
-
-            }
-
-            else {
-
-                $FileName_CSV = "$DisplayName" + "_" + $(get-date -f dd-MM-yyyy-H-mm-ss) + ".csv"
-                $FileName_JSON = "$DisplayName" + "_" + $(get-date -f dd-MM-yyyy-H-mm-ss) + ".json"
-
-            }
-
-            $Object = New-Object System.Object
-
-                foreach($Property in $Properties){
-
-                $Object | Add-Member -MemberType NoteProperty -Name $Property -Value $JSON_Convert.$Property
-
-                }
+            $FileName_JSON = "$DisplayName" + "_" + $(get-date -f dd-MM-yyyy-H-mm-ss) + ".json"
 
             write-host "Export Path:" "$ExportPath"
 
-            $Object | Export-Csv -LiteralPath "$ExportPath\$FileName_CSV" -Delimiter "," -NoTypeInformation -Append
             $JSON1 | Set-Content -LiteralPath "$ExportPath\$FileName_JSON"
-            write-host "CSV created in $ExportPath\$FileName_CSV..." -f cyan
             write-host "JSON created in $ExportPath\$FileName_JSON..." -f cyan
             
         }
@@ -368,7 +409,7 @@ $global:authToken = Get-AuthToken -User $User
 
 ####################################################
 
-$ExportPath = Read-Host -Prompt "Please specify a path to export application data to e.g. C:\IntuneOutput"
+$ExportPath = Read-Host -Prompt "Please specify a path to export the policy data to e.g. C:\IntuneOutput"
 
     # If the directory path doesn't exist prompt user to create the directory
     $ExportPath = $ExportPath.replace('"','')
@@ -399,18 +440,59 @@ $ExportPath = Read-Host -Prompt "Please specify a path to export application dat
 
 ####################################################
 
-$MDMApps = Get-IntuneApplication
+$Policies = Get-SettingsCatalogPolicy
 
-if($MDMApps){
+if($Policies){
 
-    foreach($App in $MDMApps){
+    foreach($policy in $Policies){
 
-        $Application = Get-IntuneApplication -AppId $App.id
-        $Type = $Application.'@odata.type'.split(".")[2]
+        Write-Host $policy.name -ForegroundColor Yellow
 
+        $AllSettingsInstances = @()
 
-        write-host "MDM Application:"$Application.displayName -f Yellow
-        Export-JSONData -JSON $Application -Type $Type -ExportPath "$ExportPath"
+        $policyid = $policy.id
+        $Policy_Technologies = $policy.technologies
+        $Policy_Platforms = $Policy.platforms
+        $Policy_Name = $Policy.name
+        $Policy_Description = $policy.description
+
+        $PolicyBody = New-Object -TypeName PSObject
+
+        Add-Member -InputObject $PolicyBody -MemberType 'NoteProperty' -Name 'name' -Value "$Policy_Name"
+        Add-Member -InputObject $PolicyBody -MemberType 'NoteProperty' -Name 'description' -Value "$Policy_Description"
+        Add-Member -InputObject $PolicyBody -MemberType 'NoteProperty' -Name 'platforms' -Value "$Policy_Platforms"
+        Add-Member -InputObject $PolicyBody -MemberType 'NoteProperty' -Name 'technologies' -Value "$Policy_Technologies"
+
+        # Checking if policy has a templateId associated
+        if($policy.templateReference.templateId){
+
+            Write-Host "Found template reference" -f Cyan
+            $templateId = $policy.templateReference.templateId
+
+            $PolicyTemplateReference = New-Object -TypeName PSObject
+
+            Add-Member -InputObject $PolicyTemplateReference -MemberType 'NoteProperty' -Name 'templateId' -Value $templateId
+
+            Add-Member -InputObject $PolicyBody -MemberType 'NoteProperty' -Name 'templateReference' -Value $PolicyTemplateReference
+
+        }
+
+        $SettingInstances = Get-SettingsCatalogPolicySettings -policyid $policyid
+
+        $Instances = $SettingInstances.settingInstance
+
+        foreach($object in $Instances){
+
+            $Instance = New-Object -TypeName PSObject
+
+            Add-Member -InputObject $Instance -MemberType 'NoteProperty' -Name 'settingInstance' -Value $object
+            $AllSettingsInstances += $Instance
+
+        }
+
+        Add-Member -InputObject $PolicyBody -MemberType 'NoteProperty' -Name 'settings' -Value @($AllSettingsInstances)
+
+        Export-JSONData -JSON $PolicyBody -ExportPath "$ExportPath"
         Write-Host
 
     }
@@ -419,7 +501,7 @@ if($MDMApps){
 
 else {
 
-    Write-Host "No MDM Applications added to the Intune Service..." -ForegroundColor Red
+    Write-Host "No Settings Catalog policies found..." -ForegroundColor Red
     Write-Host
 
 }
